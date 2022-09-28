@@ -209,7 +209,8 @@ export function initialize() {
     delegate("body", {
         target: [
             ".recipient_bar_icon",
-            ".sidebar-title",
+            "#streams_header .sidebar-title",
+            "#userlist-title",
             "#user_filter_icon",
             "#scroll-to-bottom-button-clickable-area",
             ".code_external_link",
@@ -381,8 +382,12 @@ export function initialize() {
     });
 
     delegate("body", {
-        target: "#toggle_private_messages_section_icon",
+        target: "#pm_tooltip_container",
         onShow(instance) {
+            if ($(".private_messages_container").hasClass("zoom-in")) {
+                return false;
+            }
+
             if ($("#toggle_private_messages_section_icon").hasClass("fa-caret-down")) {
                 instance.setContent(
                     $t({
@@ -392,7 +397,9 @@ export function initialize() {
             } else {
                 instance.setContent($t({defaultMessage: "Expand private messages"}));
             }
+            return true;
         },
+        delay: [500, 20],
         appendTo: () => document.body,
     });
 

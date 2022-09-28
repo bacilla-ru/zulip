@@ -751,24 +751,39 @@ export function initialize() {
         stream_list.toggle_filter_displayed(e);
     });
 
-    $("body").on("click", "#private_messages_section_header", (e) => {
-        if (e.target.classList.value === "fa fa-align-right") {
-            // Let browser handle the click on link.
-            return;
-        }
+    $("body").on(
+        "click",
+        ".private_messages_container.zoom-out #private_messages_section_header",
+        (e) => {
+            if (e.target.classList.value === "fa fa-align-right") {
+                // Let browser handle the click on link.
+                return;
+            }
 
-        e.preventDefault();
-        e.stopPropagation();
-        const $left_sidebar_scrollbar = $(
-            "#left_sidebar_scroll_container .simplebar-content-wrapper",
-        );
-        const scroll_position = $left_sidebar_scrollbar.scrollTop();
-        if (scroll_position === 0 || pm_list.is_private_messages_collapsed()) {
-            // We don't toggle PM section if it is already open and user is scrolled down.
-            pm_list.toggle_private_messages_section();
-        }
-        $left_sidebar_scrollbar.scrollTop(0);
-    });
+            e.preventDefault();
+            e.stopPropagation();
+            const $left_sidebar_scrollbar = $(
+                "#left_sidebar_scroll_container .simplebar-content-wrapper",
+            );
+            const scroll_position = $left_sidebar_scrollbar.scrollTop();
+            if (scroll_position === 0 || pm_list.is_private_messages_collapsed()) {
+                // We don't toggle PM section if it is already open and user is scrolled down.
+                pm_list.toggle_private_messages_section();
+            }
+            $left_sidebar_scrollbar.scrollTop(0);
+        },
+    );
+
+    $("body").on(
+        "click",
+        "#show_all_private_messages, .private_messages_container.zoom-in #private_messages_section_header",
+        (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            window.location.hash = "narrow/is/private";
+        },
+    );
 
     // WEBATHENA
 

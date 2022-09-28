@@ -58,23 +58,23 @@
     </div>
 
     <div class="private_messages_container zoom-out hidden-for-spectators">
-        <a class="zoom-out-hide" id="hide_more_private_messages">
-            <i class="fa fa-chevron-left" aria-hidden="true"></i>
-            {{t 'BACK' }}
-        </a>
         <div id="private_messages_section">
             <div id="private_messages_section_header" class="zoom-out zoom-in-sticky">
-                <span id="more_private_messages_sidebar_title" class="zoom-out-hide">{{t 'Private messages' }}</span>
-                <i id="toggle_private_messages_section_icon" class="fa fa-lg fa-caret-down toggle_private_messages_section zoom-in-hide" aria-hidden="true"></i>
-                <h4 class="sidebar-title toggle_private_messages_section zoom-in-hide" data-tippy-content="{{t 'Private messages' }}">{{t 'PRIVATE MESSAGES' }}</h4>
+                <span id="pm_tooltip_container">
+                    <i id="toggle_private_messages_section_icon" class="fa fa-sm fa-caret-down toggle_private_messages_section zoom-in-hide" aria-hidden="true"></i>
+                    <h4 class="sidebar-title toggle_private_messages_section">{{t 'PRIVATE MESSAGES' }}</h4>
+                </span>
                 <span class="unread_count"></span>
-                <a href="#narrow/is/private" id="show_all_private_messages">
+                <a id="show_all_private_messages">
                     <i class="fa fa-align-right" aria-hidden="true"></i>
                 </a>
             </div>
         </div>
+        <a class="zoom-out-hide" id="hide_more_private_messages">
+            <span> {{t 'back to streams' }}</span>
+        </a>
     </div>
-
+    {{~!-- squash whitespace --~}}
     <div id="left_sidebar_scroll_container" class="scrolling_list" data-simplebar>
         <div class="private_messages_container zoom-out hidden-for-spectators">
             <div id="private_messages_list"></div>

@@ -69,7 +69,7 @@ li.show-more-topics {
     float: right;
     opacity: 0.5;
     padding: 3px;
-    margin-left: 7px;
+    margin-left: 4px;
 
     &:hover {
         opacity: 1;
@@ -86,7 +86,7 @@ li.show-more-topics {
 }
 
 #streams_inline_icon {
-    margin-right: 10px;
+    margin-right: 8px;
 }
 
 .tooltip {
@@ -202,13 +202,19 @@ li.show-more-topics {
 
 .private_messages_container {
     background: hsl(0, 0%, 100%);
-    margin-right: 12px;
+    margin-right: 16px;
+    margin-left: 6px;
     z-index: 1;
 
     #toggle_private_messages_section_icon {
         opacity: 0.7;
-        margin-left: 3px;
-        min-width: 13px;
+        margin-left: -15px;
+        min-width: 12px;
+
+        &.fa-caret-right {
+            position: relative;
+            left: 3px;
+        }
 
         &:hover {
             opacity: 1;
@@ -217,7 +223,7 @@ li.show-more-topics {
 
     #private_messages_section_header {
         cursor: pointer;
-        padding-left: $far_left_gutter_size;
+        padding-left: 4px;
         padding-right: 10px;
         white-space: nowrap;
 
@@ -228,7 +234,7 @@ li.show-more-topics {
             opacity: 0.7;
             text-decoration: none;
             color: inherit;
-            margin-right: 25px;
+            margin-right: 21px;
             margin-top: 1px;
 
             &:hover {
@@ -237,7 +243,7 @@ li.show-more-topics {
         }
 
         .unread_count {
-            margin-right: 20px;
+            margin-right: 16px;
             margin-top: 2px;
         }
     }
@@ -254,7 +260,7 @@ li.show-more-topics {
 
         li.pm-list-item {
             position: relative;
-            padding: 1px 10px 1px $far_left_gutter_size;
+            padding: 1px 10px 1px 4px;
             margin-left: 2px;
 
             a {
@@ -269,12 +275,11 @@ li.show-more-topics {
 
         li#show_more_private_messages {
             cursor: pointer;
-            padding-right: 30px;
-            padding-left: 16px;
+            padding-right: 26px;
+            padding-left: 6px;
 
             a {
                 font-size: 12px;
-                margin-left: $topic_resolve_width;
             }
 
             .unread_count {
@@ -286,7 +291,8 @@ li.show-more-topics {
 
 .active_private_messages_section {
     #private_messages_section,
-    #private_messages_list {
+    #private_messages_list,
+    #hide_more_private_messages {
         background-color: hsl(202, 56%, 91%);
     }
 
@@ -571,7 +577,7 @@ li.topic-list-item {
 }
 
 .pm-box {
-    margin-right: 20px;
+    margin-right: 16px;
     align-items: center;
 
     .user_circle {
@@ -704,11 +710,18 @@ li.topic-list-item {
         display: block;
         text-decoration: none;
         color: inherit;
-        margin-left: 13px;
-        opacity: 0.7;
+        font-size: 12px;
 
-        .fa-chevron-left {
-            padding-right: 3px;
+        span {
+            display: block;
+            padding: 2px 0 2px 4px;
+        }
+
+        &:hover {
+            span {
+                background-color: hsla(120, 12.3%, 71.4%, 0.38);
+                border-radius: 4px;
+            }
         }
     }
 
@@ -724,6 +737,6 @@ li.topic-list-item {
     }
 
     #show_all_private_messages {
-        margin-right: 12px !important;
+        margin-right: 5px !important;
     }
 }
