@@ -224,8 +224,7 @@ li.show-more-topics {
 
     #private_messages_section_header {
         cursor: pointer;
-        padding-left: 4px;
-        padding-right: 10px;
+        padding: 0 10px 1px 4px;
         white-space: nowrap;
 
         #show_all_private_messages {
