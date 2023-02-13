@@ -543,3 +543,8 @@ MAX_MESSAGE_LENGTH = 10000
 # More drafts, should they exist for some crazy reason, could be
 # fetched in a separate request.
 MAX_DRAFTS_IN_REGISTER_RESPONSE = 1000
+
+# -- MOD ----------
+
+# Maximum auth tokens lifetime in minutes. 0 means that the tokens is eternal.
+MOD_AUTH_TOKEN_LIFETIME_MINUTES = 0
