@@ -28,7 +28,7 @@ from zerver.lib.email_validation import (
     email_allowed_for_realm as lib_email_allowed_for_realm)
 from zerver.lib.exceptions import (
     InvalidAPIKeyError, JsonableError, MissingAuthenticationError,
-    OrganizationAdministratorRequired, UnauthorizedError)
+    OrganizationAdministratorRequiredError, UnauthorizedError)
 from zerver.lib.rest import rest_dispatch as lib_rest_dispatch
 from zerver.lib.sqlalchemy_utils import get_sqlalchemy_connection
 from zerver.lib.upload import (
@@ -351,8 +351,9 @@ def refresh_or_create_auth_token_backend(request, admin: UserProfile, user_id=No
             name=name
         )
         if not created:
-            auth_token.token = None
-            auth_token.save()
+            auth_token.refresh()
+            # auth_token.token = None
+            # auth_token.save()
     ret = dict(
         expires=auth_token.expires,
         name=auth_token.name,
@@ -406,8 +407,9 @@ def update_fcm_token_backend(request, admin: UserProfile, user_id=None, name=Non
         )
         if not created:
             token_was_null = auth_token.fcm_token is None
-            auth_token.fcm_token = fcm_token
-            auth_token.save(update_fields=["fcm_token"])
+            auth_token.set_fcm_token(fcm_token)
+            # auth_token.fcm_token = fcm_token
+            # auth_token.save(update_fields=["fcm_token"])
     if created:
         return created_response(
             expires=auth_token.expires,
@@ -438,8 +440,9 @@ def delete_fcm_token_backend(request, admin: UserProfile, user_id=None, name=Non
             return success_response()
         if auth_token.fcm_token is None:
             return success_response()
-        auth_token.fcm_token = None
-        auth_token.save(update_fields=["fcm_token"])
+        auth_token.set_fcm_token(None)
+        # auth_token.fcm_token = None
+        # auth_token.save(update_fields=["fcm_token"])
     return success_response()
 
 
@@ -713,8 +716,9 @@ def update_user_group_membership(
             if status == "":
                 membership_status.delete()
             elif membership_status.status != status:
-                membership_status.status = status
-                membership_status.save(update_fields=["status"])
+                membership_status.set_status(status)
+                # membership_status.status = status
+                # membership_status.save(update_fields=["status"])
     for group_name in current_set.difference(update_set):  # remove user from groups
         user_group, _, _ = current[group_name]
         remove_members_from_user_group(user_group, user_profile_ids)
@@ -804,7 +808,7 @@ def dispatch(request: HttpRequest, /, **kwargs: object) -> HttpResponse:
         resp: HttpResponse = lib_rest_dispatch(request, **kwargs)
     except (InvalidAPIKeyError, MissingAuthenticationError, UnauthorizedError):
         return unauthorized_response()
-    except OrganizationAdministratorRequired:
+    except OrganizationAdministratorRequiredError:
         return forbidden_response()
     except BadRequest:
         return bad_request_response()

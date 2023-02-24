@@ -1,15 +1,23 @@
 import secrets
 import string
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
+from typing import List, NamedTuple, Optional, Tuple
 
 from dateutil.relativedelta import relativedelta
 from django.conf import settings
 from django.contrib.postgres.fields import ArrayField
-from django.core.validators import MaxLengthValidator, MinLengthValidator, RegexValidator
+from django.core.validators import (
+    MaxLengthValidator, MinLengthValidator, RegexValidator)
 from django.db import models
 from django.db.models import CASCADE
+from django.db.models.signals import post_delete, post_save
 from django.utils import timezone
-from zerver.models import UserGroup, UserGroupMembership, UserProfile
+
+from zerver.lib.cache import cache_delete, cache_with_key
+from zerver.models import (
+    UserGroup, UserGroupMembership, UserProfile, get_user_profile_by_id)
+
+from .lib.cache import auth_token_cache_key, flush_auth_token
 
 
 class AuthToken(models.Model):
@@ -40,7 +48,7 @@ class AuthToken(models.Model):
             alphabet2 = alphabet1 + "-_"
             self.token = (
                 secrets.choice(alphabet1) +
-                ''.join(secrets.choice(alphabet2) for _ in range(38)) +
+                ''.join(secrets.choice(alphabet2) for _ in range(self.TOKEN_LENGTH - 2)) +
                 secrets.choice(alphabet1)
             )
             if update_fields is not None and "issued" not in update_fields:
@@ -58,8 +66,52 @@ class AuthToken(models.Model):
             return not(current_time() < self.issued + self.TOKEN_LIFETIME)
         return False
 
+    def refresh(self):
+        cache_delete(auth_token_cache_key(self.token))
+        self.token = None
+        self.save(update_fields={"issued", "token"})
+
+    def set_fcm_token(self, fcm_token: Optional[str]):
+        self.fcm_token = fcm_token
+        self.save(update_fields={"fcm_token"})
+
     def __str__(self):
         return self.token
+
+
+post_save.connect(flush_auth_token, sender=AuthToken)
+post_delete.connect(flush_auth_token, sender=AuthToken)
+
+
+class AuthTokenCacheItem(NamedTuple):
+    issued: int
+    user_profile_id: int
+
+    def expired(self, current_time=timezone.now) -> bool:
+        if AuthToken.TOKEN_LIFETIME:
+            t = current_time()
+            return not(t < datetime.fromtimestamp(self.issued, t.tzinfo) + AuthToken.TOKEN_LIFETIME)
+        return False
+
+
+@cache_with_key(auth_token_cache_key, timeout=3600 * 24 * 7)
+def get_auth_token_cache_item(auth_token: str) -> Optional[AuthTokenCacheItem]:
+    issued: datetime
+    user_profile_id: int
+    try:
+        issued, user_profile_id = (
+            AuthToken.objects.values_list("issued", "user_profile_id").get(token=auth_token)
+        )
+    except AuthToken.DoesNotExist:
+        return None
+    return AuthTokenCacheItem(int(issued.timestamp()), user_profile_id)
+
+
+def get_user_profile_by_auth_token(auth_token: str) -> UserProfile:
+    cache_item = get_auth_token_cache_item(auth_token)
+    if cache_item and not cache_item.expired():
+        return get_user_profile_by_id(cache_item.user_profile_id)
+    raise UserProfile.DoesNotExist
 
 
 class UserGroupMembershipStatus(models.Model):
@@ -70,6 +122,10 @@ class UserGroupMembershipStatus(models.Model):
         primary_key=True
     )
     status = models.TextField()
+
+    def set_status(self, status: str):
+        self.status = status
+        self.save(update_fields={"status"})
 
 
 def get_direct_membership(
@@ -107,7 +163,12 @@ class UserProfileExt(models.Model):
 
     id = models.IntegerField(primary_key=True)
     account_type = models.TextField(default=INTERNAL, choices=ACCOUNT_TYPES)
-    avatar = models.BinaryField(blank=True, null=True, editable=True, validators=[MaxLengthValidator(_max_avatar_length)])
+    avatar = models.BinaryField(
+        blank=True,
+        null=True,
+        editable=True,
+        validators=[MaxLengthValidator(_max_avatar_length)]
+    )
     name = models.CharField(
         max_length=UserProfile.MAX_NAME_LENGTH - 2,
         validators=[RegexValidator(r"^\S+$")]

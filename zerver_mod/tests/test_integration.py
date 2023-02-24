@@ -1,7 +1,7 @@
 import base64
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, Set, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Set, Union
 from unittest import mock
 
 import orjson
@@ -26,10 +26,11 @@ from zerver.models import (
     get_user_by_delivery_email)
 
 from ..lib.avatar import gen_avatar
-from ..models import AuthToken, UserGroupMembershipStatus, UserProfileExt
+from ..models import AuthToken, UserGroupMembershipStatus, UserProfileExt, get_user_profile_by_auth_token
 
 
 class BaseTestCase(ZulipTestCase):
+
     def assert_json_success(
         self,
         result: Union["TestHttpResponse", HttpResponse],
@@ -47,7 +48,7 @@ class BaseTestCase(ZulipTestCase):
         self,
         result: "TestHttpResponse",
         status_code: int = 400,
-        errors: Union[str, Set[str]] = set({"bad_request"})
+        errors: Union[str, Set[str]] = "bad_request"
     ) -> None:
         try:
             json = orjson.loads(result.content)
@@ -63,7 +64,7 @@ class GetUserTest(BaseTestCase):
     def test_get_user(self):
         hamlet = self.example_user("hamlet")
 
-        url = f"/iparty-internal/v1/user/1"
+        url = "/iparty-internal/v1/user/1"
 
         result = self.client_get(url)
         self.assert_json_error(result, 401, "unauthorized")
@@ -103,6 +104,7 @@ class GetUserTest(BaseTestCase):
 
 
 class CreateUserTest(BaseTestCase):
+
     def test_create_user(self):
         realm = get_realm("zulip")
         hamlet = self.example_user("hamlet")
@@ -736,7 +738,7 @@ class AuthTokenTest(BaseTestCase):
             for name in ["default", "iPhone 13", "Pixel 7 Pro"]
         }
 
-        url = f"/iparty-internal/v1/user/1/tokens"
+        url = "/iparty-internal/v1/user/1/tokens"
 
         result = self.client_get(url)
         self.assert_json_error(result, 401, "unauthorized")
@@ -762,7 +764,7 @@ class AuthTokenTest(BaseTestCase):
         hamlet = self.create_hamlet_user_profile_ext()
         existing_token = AuthToken.objects.create(name="default", user_profile=hamlet)
 
-        url = f"/iparty-internal/v1/user/1/tokens/default"
+        url = "/iparty-internal/v1/user/1/tokens/default"
 
         result = self.client_get(url)
         self.assert_json_error(result, 401, "unauthorized")
@@ -788,7 +790,7 @@ class AuthTokenTest(BaseTestCase):
         self.assertFalse(
             AuthToken.objects.filter(name="default", user_profile=hamlet).exists()
         )
-        url = f"/iparty-internal/v1/user/1/tokens/default"
+        url = "/iparty-internal/v1/user/1/tokens/default"
         self.login("iago")
         result = self.client_get(url)
         result_json = self.assert_json_success(result, 201)
@@ -807,7 +809,7 @@ class AuthTokenTest(BaseTestCase):
         )
         existing_token = AuthToken.objects.get(name="default", user_profile=hamlet)
 
-        url = f"/iparty-internal/v1/user/1/tokens/default"
+        url = "/iparty-internal/v1/user/1/tokens/default"
 
         result = self.json_put(url)
         self.assert_json_error(result, 401, "unauthorized")
@@ -836,7 +838,7 @@ class AuthTokenTest(BaseTestCase):
         self.assertFalse(
             AuthToken.objects.filter(name="default", user_profile=hamlet).exists()
         )
-        url = f"/iparty-internal/v1/user/1/tokens/default"
+        url = "/iparty-internal/v1/user/1/tokens/default"
         self.login("iago")
         result = self.json_put(url)
         result_json = self.assert_json_success(result, 201)
@@ -852,7 +854,7 @@ class AuthTokenTest(BaseTestCase):
         for name in ["default", "iPhone 13", "Pixel 7 Pro"]:
             AuthToken.objects.create(name=name, user_profile=hamlet)
 
-        url = f"/iparty-internal/v1/user/1/tokens/Pixel 7 Pro"
+        url = "/iparty-internal/v1/user/1/tokens/Pixel 7 Pro"
 
         result = self.client_delete(url)
         self.assert_json_error(result, 401, "unauthorized")
@@ -881,17 +883,42 @@ class AuthTokenTest(BaseTestCase):
         self.assertFalse(
             AuthToken.objects.filter(name="default", user_profile=hamlet).exists()
         )
-        url = f"/iparty-internal/v1/user/1/tokens/default"
         self.login("iago")
-        result = self.client_delete(url)
+        result = self.client_delete("/iparty-internal/v1/user/1/tokens/default")
         self.assert_json_success(result)
+
+    def test_token_caching(self):
+        hamlet = self.create_hamlet_user_profile_ext()
+        email = hamlet.email
+
+        token_names = ["default", "iPhone 13", "Pixel 7 Pro"]
+
+        old_tokens = [AuthToken.objects.create(name=name, user_profile=hamlet).token for name in token_names]
+        for token in old_tokens:
+            self.assertEqual(get_user_profile_by_auth_token(token).email, email)
+
+        self.login("iago")
+        current_tokens = []
+        for name in token_names:
+            result = self.json_put(f"/iparty-internal/v1/user/1/tokens/{name}")
+            new_token = self.assert_json_success(result)["token"]
+            self.assertNotIn(new_token, old_tokens)
+            current_tokens.append(new_token)
+
+        for token in old_tokens:
+            self.assertFalse(AuthToken.objects.filter(token=token).exists())
+            with self.assertRaises(UserProfile.DoesNotExist):
+                user_profile = get_user_profile_by_auth_token(token)
+
+        for token in current_tokens:
+            self.assertEqual(get_user_profile_by_auth_token(token).email, email)
 
     def test_create_fcm_token_in_existing_auth_token(self):
         hamlet = self.create_hamlet_user_profile_ext()
         existing_token = AuthToken.objects.create(name="default", user_profile=hamlet)
         self.assertIsNone(existing_token.fcm_token)
 
-        url = f"/iparty-internal/v1/user/1/tokens/default/fcm-token"
+        url = "/iparty-internal/v1/user/1/tokens/default/fcm-token"
         fcm_token = get_random_string(60)
 
         result = self.client_put_plain_text(url, fcm_token)
@@ -918,7 +945,7 @@ class AuthTokenTest(BaseTestCase):
         hamlet = self.create_hamlet_user_profile_ext()
         existing_token = AuthToken.objects.create(name="default", user_profile=hamlet, fcm_token="OLD")
 
-        url = f"/iparty-internal/v1/user/1/tokens/default/fcm-token"
+        url = "/iparty-internal/v1/user/1/tokens/default/fcm-token"
         fcm_token = get_random_string(60)
 
         self.login("iago")
@@ -937,7 +964,7 @@ class AuthTokenTest(BaseTestCase):
             AuthToken.objects.filter(name="default", user_profile=hamlet).exists()
         )
 
-        url = f"/iparty-internal/v1/user/1/tokens/default/fcm-token"
+        url = "/iparty-internal/v1/user/1/tokens/default/fcm-token"
         fcm_token = get_random_string(60)
 
         self.login("iago")
@@ -959,7 +986,7 @@ class AuthTokenTest(BaseTestCase):
             fcm_token=get_random_string(60)
         )
 
-        url = f"/iparty-internal/v1/user/1/tokens/default/fcm-token"
+        url = "/iparty-internal/v1/user/1/tokens/default/fcm-token"
 
         result = self.client_delete(url)
         self.assert_json_error(result, 401, "unauthorized")
@@ -985,7 +1012,7 @@ class AuthTokenTest(BaseTestCase):
         hamlet = self.create_hamlet_user_profile_ext()
         existing_token = AuthToken.objects.create(name="default", user_profile=hamlet)
         self.assertIsNone(existing_token.fcm_token)
-        url = f"/iparty-internal/v1/user/1/tokens/default/fcm-token"
+        url = "/iparty-internal/v1/user/1/tokens/default/fcm-token"
         self.login("iago")
         result = self.client_delete(url)
         result_json = self.assert_json_success(result)
