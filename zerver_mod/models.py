@@ -17,11 +17,12 @@ from zerver.lib.cache import cache_delete, cache_with_key
 from zerver.models import (
     UserGroup, UserGroupMembership, UserProfile, get_user_profile_by_id)
 
+from .lib import auth_token
 from .lib.cache import auth_token_cache_key, flush_auth_token
 
 
 class AuthToken(models.Model):
-    TOKEN_LENGTH = 40
+    TOKEN_LENGTH = auth_token.TOKEN_LENGTH
     TOKEN_LIFETIME = (
         relativedelta(minutes=settings.MOD_AUTH_TOKEN_LIFETIME_MINUTES)
         if settings.MOD_AUTH_TOKEN_LIFETIME_MINUTES > 0
@@ -44,13 +45,7 @@ class AuthToken(models.Model):
     def save(self, update_fields=None, **kwargs):
         if not self.token and (update_fields is None or "token" in update_fields):
             self.issued = timezone.now().replace(microsecond=0)
-            alphabet1 = string.ascii_letters + string.digits
-            alphabet2 = alphabet1 + "-_"
-            self.token = (
-                secrets.choice(alphabet1) +
-                ''.join(secrets.choice(alphabet2) for _ in range(self.TOKEN_LENGTH - 2)) +
-                secrets.choice(alphabet1)
-            )
+            self.token = auth_token.generate()
             if update_fields is not None and "issued" not in update_fields:
                 update_fields = {*update_fields, "issued"}
         return super().save(update_fields=update_fields, **kwargs)

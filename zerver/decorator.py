@@ -62,6 +62,9 @@ from zerver.lib.users import is_2fa_verified
 from zerver.lib.utils import has_api_key_format, statsd
 from zerver.models import UserProfile, get_client, get_user_profile_by_api_key
 
+from zerver_mod.lib.auth_token import has_valid_format as auth_token_has_valid_format
+from zerver_mod.models import get_user_profile_by_auth_token
+
 if TYPE_CHECKING:
     from django.http.request import _ImmutableQueryDict
 
@@ -738,21 +741,30 @@ def authenticated_rest_api_view(
         def _wrapped_func_arguments(
             request: HttpRequest, /, *args: ParamT.args, **kwargs: ParamT.kwargs
         ) -> HttpResponse:
-            role, api_key = get_basic_credentials(
-                request, beanstalk_email_decode=beanstalk_email_decode
-            )
-
-            # Now we try to do authentication or die
-            try:
-                user_profile = validate_api_key(
-                    request,
-                    role,
-                    api_key,
-                    allow_webhook_access=allow_webhook_access,
-                    client_name=full_webhook_client_name(webhook_client_name),
+            auth_token = extract_auth_token_from_request(request)
+            if auth_token:
+                try:
+                    user_profile = validate_auth_token(request, auth_token)
+                except JsonableError as e:
+                    exc = UnauthorizedError(e.msg)
+                    exc.www_authenticate = f"Token {exc.www_authenticate.split()[1]}"
+                    raise exc
+            else:
+                role, api_key = get_basic_credentials(
+                    request, beanstalk_email_decode=beanstalk_email_decode
                 )
-            except JsonableError as e:
-                raise UnauthorizedError(e.msg)
+
+                # Now we try to do authentication or die
+                try:
+                    user_profile = validate_api_key(
+                        request,
+                        role,
+                        api_key,
+                        allow_webhook_access=allow_webhook_access,
+                        client_name=full_webhook_client_name(webhook_client_name),
+                    )
+                except JsonableError as e:
+                    raise UnauthorizedError(e.msg)
             try:
                 if not skip_rate_limiting:
                     rate_limit_user(request, user_profile, domain="api_by_user")
@@ -1046,3 +1058,29 @@ def add_google_analytics(
         return response
 
     return _wrapped_view_func
+
+
+def extract_auth_token_from_request(request: HttpRequest) -> Optional[str]:
+    try:
+        auth_type, auth_token = request.headers["Authorization"].split()
+        # case insensitive per RFC 1945
+        if auth_type.lower() != "token":
+            return None
+    except (KeyError, ValueError):
+        return None
+    return auth_token.strip()
+
+
+def validate_auth_token(request: HttpRequest, auth_token: str) -> UserProfile:
+    if not auth_token_has_valid_format(auth_token):
+        raise UnauthorizedError
+    try:
+        user_profile = get_user_profile_by_auth_token(auth_token)
+    except UserProfile.DoesNotExist:
+        raise UnauthorizedError
+    if user_profile.is_incoming_webhook:
+        raise UnauthorizedError
+    validate_account_and_subdomain(request, user_profile)
+    request.user = user_profile
+    process_client(request, user_profile)
+    return user_profile
