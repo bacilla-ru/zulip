@@ -12,6 +12,7 @@ from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.urls.resolvers import URLPattern
 from django.utils.functional import empty
 from django.utils.timezone import now as timezone_now
+from django.views.decorators.csrf import csrf_exempt
 from sqlalchemy.dialects.postgresql import array_agg
 from sqlalchemy.sql import any_, column, not_, select, table
 from sqlalchemy.sql.selectable import SelectBase
@@ -827,6 +828,7 @@ def created_response(*dicts: dict, **kwargs) -> HttpResponse:
 # Dispatch ------------------------------------------------
 
 
+@csrf_exempt
 def dispatch(request: HttpRequest, /, **kwargs: object) -> HttpResponse:
     try:
         resp: HttpResponse = lib_rest_dispatch(request, **kwargs)
