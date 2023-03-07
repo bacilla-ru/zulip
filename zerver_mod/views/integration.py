@@ -13,8 +13,7 @@ from django.urls.resolvers import URLPattern
 from django.utils.functional import empty
 from django.utils.timezone import now as timezone_now
 from sqlalchemy.dialects.postgresql import array_agg
-from sqlalchemy.sql import (
-    any_, column, not_, select, table)
+from sqlalchemy.sql import any_, column, not_, select, table
 from sqlalchemy.sql.selectable import SelectBase
 from sqlalchemy.types import VARCHAR, Boolean, Integer
 
@@ -29,6 +28,10 @@ from zerver.lib.email_validation import (
 from zerver.lib.exceptions import (
     InvalidAPIKeyError, JsonableError, MissingAuthenticationError,
     OrganizationAdministratorRequiredError, UnauthorizedError)
+from zerver.lib.push_notifications import (
+    add_push_device_token as lib_add_push_device_token,
+    clear_push_device_tokens as lib_clear_push_device_tokens,
+    remove_push_device_token as lib_remove_push_device_token)
 from zerver.lib.rest import rest_dispatch as lib_rest_dispatch
 from zerver.lib.sqlalchemy_utils import get_sqlalchemy_connection
 from zerver.lib.upload import (
@@ -36,8 +39,9 @@ from zerver.lib.upload import (
 from zerver.lib.users import check_full_name as lib_check_full_name
 from zerver.models import (
     DisposableEmailError, DomainNotAllowedForRealmError,
-    EmailContainsPlusError, Realm, RealmAuditLog, UserGroup,
+    EmailContainsPlusError, PushDeviceToken, Realm, RealmAuditLog, UserGroup,
     UserGroupMembership, UserProfile)
+
 from ..lib.avatar import gen_avatar
 from ..models import (
     AuthToken, UserGroupMembershipStatus, UserProfileExt,
@@ -155,14 +159,17 @@ def create_user_backend(request, admin: UserProfile, user_id=None) -> HttpRespon
             result = success_response
         create_user_group_membership(user_profile, groups, realm)
         if tokens:
-            created_tokens = [
-                AuthToken.objects.create(
-                    user_profile=user_profile,
-                    name=name,
-                    fcm_token=None if fcm_token == "" else fcm_token
+            created_tokens = []
+            for name, fcm_token in tokens.items():
+                created_tokens.append(
+                    AuthToken.objects.create(
+                        user_profile=user_profile,
+                        name=name,
+                        fcm_token=fcm_token if fcm_token else None
+                    )
                 )
-                for name, fcm_token in tokens.items()
-            ]
+                if fcm_token:
+                    add_push_device_token(user_profile, fcm_token)
     if created_tokens:
         return result(tokens=[
             dict(
@@ -286,6 +293,7 @@ def deactivate_user_backend(request, admin: UserProfile, user_id=None):  # DELET
                 user_group__is_system_group=False
             ).delete()
             AuthToken.objects.filter(user_profile=user_profile).delete()
+            lib_clear_push_device_tokens(user_profile.id)
     return success_response()
 
 
@@ -352,8 +360,6 @@ def refresh_or_create_auth_token_backend(request, admin: UserProfile, user_id=No
         )
         if not created:
             auth_token.refresh()
-            # auth_token.token = None
-            # auth_token.save()
     ret = dict(
         expires=auth_token.expires,
         name=auth_token.name,
@@ -367,16 +373,21 @@ def refresh_or_create_auth_token_backend(request, admin: UserProfile, user_id=No
 def delete_auth_token_backend(request, admin: UserProfile, user_id=None, name=None) -> HttpResponse:
     try:
         user_profile_ext: UserProfileExt = (
-            UserProfileExt.objects.only("user_profile_id")
+            UserProfileExt.objects
+            .select_related("user_profile")
             .get(id=user_id, user_profile__realm=admin.realm)
         )
     except UserProfileExt.DoesNotExist:
         return not_found_response()
+    user_profile: UserProfile = user_profile_ext.user_profile
     with transaction.atomic():
-        AuthToken.objects.filter(
-            user_profile_id=user_profile_ext.user_profile_id,
-            name=name
-        ).delete()
+        try:
+            auth_token = AuthToken.objects.select_for_update().get(user_profile=user_profile, name=name)
+        except AuthToken.DoesNotExist:
+            return success_response()
+        auth_token.delete()
+        if auth_token.fcm_token:
+            remove_push_device_token(user_profile, auth_token.fcm_token)
     return success_response()
 
 
@@ -391,25 +402,28 @@ def update_fcm_token_backend(request, admin: UserProfile, user_id=None, name=Non
         return failure_response()
     try:
         user_profile_ext: UserProfileExt = (
-            UserProfileExt.objects.only("user_profile_id")
+            UserProfileExt.objects
+            .select_related("user_profile")
             .get(id=user_id, user_profile__realm=admin.realm)
         )
     except UserProfileExt.DoesNotExist:
         return not_found_response()
+    user_profile: UserProfile = user_profile_ext.user_profile
     auth_token: AuthToken
     created: bool
     token_was_null: bool
     with transaction.atomic():
         auth_token, created = AuthToken.objects.select_for_update().get_or_create(
-            user_profile_id=user_profile_ext.user_profile_id,
+            user_profile=user_profile,
             name=name,
             defaults=dict(fcm_token=fcm_token)
         )
         if not created:
             token_was_null = auth_token.fcm_token is None
+            if not token_was_null:
+                remove_push_device_token(user_profile, auth_token.fcm_token)
             auth_token.set_fcm_token(fcm_token)
-            # auth_token.fcm_token = fcm_token
-            # auth_token.save(update_fields=["fcm_token"])
+        add_push_device_token(user_profile, fcm_token)
     if created:
         return created_response(
             expires=auth_token.expires,
@@ -424,25 +438,24 @@ def update_fcm_token_backend(request, admin: UserProfile, user_id=None, name=Non
 def delete_fcm_token_backend(request, admin: UserProfile, user_id=None, name=None) -> HttpResponse:
     try:
         user_profile_ext: UserProfileExt = (
-            UserProfileExt.objects.only("user_profile_id")
+            UserProfileExt.objects
+            .select_related("user_profile")
             .get(id=user_id, user_profile__realm=admin.realm)
         )
     except UserProfileExt.DoesNotExist:
         return not_found_response()
+    user_profile: UserProfile = user_profile_ext.user_profile
     auth_token: AuthToken
     with transaction.atomic():
         try:
-            auth_token = AuthToken.objects.select_for_update().get(
-                user_profile_id=user_profile_ext.user_profile_id,
-                name=name
-            )
+            auth_token = AuthToken.objects.select_for_update().get(user_profile=user_profile, name=name)
         except AuthToken.DoesNotExist:
             return success_response()
-        if auth_token.fcm_token is None:
+        fcm_token: Optional[str] = auth_token.fcm_token
+        if fcm_token is None:
             return success_response()
         auth_token.set_fcm_token(None)
-        # auth_token.fcm_token = None
-        # auth_token.save(update_fields=["fcm_token"])
+        remove_push_device_token(user_profile, fcm_token)
     return success_response()
 
 
@@ -729,6 +742,17 @@ def update_user_group_membership(
             {group_name: groups[group_name] for group_name in create_set},
             realm
         )
+
+
+def add_push_device_token(user_profile: UserProfile, token_str: str) -> PushDeviceToken:
+    return lib_add_push_device_token(user_profile, token_str, PushDeviceToken.GCM)
+
+
+def remove_push_device_token(user_profile: UserProfile, token_str: str):
+    try:
+        lib_remove_push_device_token(user_profile, token_str, PushDeviceToken.GCM)
+    except JsonableError:
+        pass
 
 
 # Response helpers ----------------------------------------

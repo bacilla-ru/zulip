@@ -18,15 +18,18 @@ from zerver.actions.user_settings import (
     do_change_avatar_fields, do_change_full_name)
 from zerver.actions.users import (
     do_change_can_create_users, do_change_user_role, do_deactivate_user)
+from zerver.lib.push_notifications import add_push_device_token
 from zerver.lib.test_classes import ZulipTestCase
 from zerver.lib.test_helpers import avatar_disk_path
 from zerver.lib.user_groups import create_user_group
 from zerver.models import (
-    UserGroup, UserGroupMembership, UserProfile, get_realm,
+    PushDeviceToken, UserGroup, UserGroupMembership, UserProfile, get_realm,
     get_user_by_delivery_email)
 
 from ..lib.avatar import gen_avatar
-from ..models import AuthToken, UserGroupMembershipStatus, UserProfileExt, get_user_profile_by_auth_token
+from ..models import (
+    AuthToken, UserGroupMembershipStatus, UserProfileExt,
+    get_user_profile_by_auth_token)
 
 
 class BaseTestCase(ZulipTestCase):
@@ -292,7 +295,7 @@ class CreateUserTest(BaseTestCase):
         result = self.client_post(url, params, content_type="application/json")
         self.assert_json_error(result)
 
-        random_fcm_token_1 = get_random_string(40)
+        random_fcm_token_1 = get_random_string(60)
         params["tokens"] = [
             dict(name="default"),
             dict(name="iPhone 13", fcm_token=None),
@@ -315,6 +318,7 @@ class CreateUserTest(BaseTestCase):
             if token["name"] == "Pixel 7 Pro":
                 kwargs["fcm_token"] = random_fcm_token_1
             self.assertTrue(AuthToken.objects.filter(**kwargs).exists())
+        self.assertTrue(PushDeviceToken.objects.filter(token=random_fcm_token_1).exists())
 
     def test_reactivate_user(self):
         realm = get_realm("zulip")
@@ -671,7 +675,12 @@ class UpdateUserTest(BaseTestCase):
             surname="King",
             user_profile=hamlet
         )
-        AuthToken.objects.create(name="default", user_profile=hamlet)
+        auth_token = AuthToken.objects.create(
+            fcm_token=get_random_string(60),
+            name="default",
+            user_profile=hamlet
+        )
+        add_push_device_token(hamlet, auth_token.fcm_token, PushDeviceToken.GCM)
 
         url = "/iparty-internal/v1/user/1"
 
@@ -699,9 +708,8 @@ class UpdateUserTest(BaseTestCase):
             .filter(user_group__is_system_group=False, user_profile=hamlet)
             .exists()
         )
-        self.assertFalse(
-            AuthToken.objects.filter(user_profile=hamlet).exists()
-        )
+        self.assertFalse(AuthToken.objects.filter(user_profile=hamlet).exists())
+        self.assertFalse(PushDeviceToken.objects.filter(user=hamlet).exists())
 
 
 class AuthTokenTest(BaseTestCase):
@@ -918,8 +926,10 @@ class AuthTokenTest(BaseTestCase):
         existing_token = AuthToken.objects.create(name="default", user_profile=hamlet)
         self.assertIsNone(existing_token.fcm_token)
 
-        url = "/iparty-internal/v1/user/1/tokens/default/fcm-token"
         fcm_token = get_random_string(60)
+        self.assertFalse(PushDeviceToken.objects.filter(token=fcm_token).exists())
+
+        url = "/iparty-internal/v1/user/1/tokens/default/fcm-token"
 
         result = self.client_put_plain_text(url, fcm_token)
         self.assert_json_error(result, 401, "unauthorized")
@@ -940,10 +950,12 @@ class AuthTokenTest(BaseTestCase):
         self.assertEqual(updated_token.token, existing_token.token)
         self.assertEqual(updated_token.expires, existing_token.expires)
         self.assertEqual(updated_token.issued, existing_token.issued)
+        self.assertTrue(PushDeviceToken.objects.filter(token=fcm_token).exists())
 
     def test_update_fcm_token_in_existing_auth_token(self):
         hamlet = self.create_hamlet_user_profile_ext()
         existing_token = AuthToken.objects.create(name="default", user_profile=hamlet, fcm_token="OLD")
+        add_push_device_token(hamlet, "OLD", PushDeviceToken.GCM)
 
         url = "/iparty-internal/v1/user/1/tokens/default/fcm-token"
         fcm_token = get_random_string(60)
@@ -957,6 +969,8 @@ class AuthTokenTest(BaseTestCase):
         self.assertEqual(updated_token.token, existing_token.token)
         self.assertEqual(updated_token.expires, existing_token.expires)
         self.assertEqual(updated_token.issued, existing_token.issued)
+        self.assertFalse(PushDeviceToken.objects.filter(token="OLD").exists())
+        self.assertTrue(PushDeviceToken.objects.filter(token=fcm_token).exists())
 
     def test_create_fcm_token_creates_auth_token(self):
         hamlet = self.create_hamlet_user_profile_ext()
@@ -977,6 +991,7 @@ class AuthTokenTest(BaseTestCase):
             token=created_token.token
         ))
         self.assertEqual(created_token.fcm_token, fcm_token)
+        self.assertTrue(PushDeviceToken.objects.filter(token=fcm_token).exists())
 
     def test_delete_existing_fcm_token(self):
         hamlet = self.create_hamlet_user_profile_ext()
@@ -985,6 +1000,7 @@ class AuthTokenTest(BaseTestCase):
             user_profile=hamlet,
             fcm_token=get_random_string(60)
         )
+        add_push_device_token(hamlet, existing_token.fcm_token, PushDeviceToken.GCM)
 
         url = "/iparty-internal/v1/user/1/tokens/default/fcm-token"
 
@@ -1007,6 +1023,7 @@ class AuthTokenTest(BaseTestCase):
         self.assertEqual(updated_token.token, existing_token.token)
         self.assertEqual(updated_token.expires, existing_token.expires)
         self.assertEqual(updated_token.issued, existing_token.issued)
+        self.assertFalse(PushDeviceToken.objects.filter(token=existing_token.fcm_token).exists())
 
     def test_delete_non_existent_fcm_token(self):
         hamlet = self.create_hamlet_user_profile_ext()
