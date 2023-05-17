@@ -9,6 +9,7 @@ from .views.integration import (
     partial_update_user_backend, refresh_or_create_auth_token_backend,
     rest_path, update_fcm_token_backend, update_user_backend)
 from .views.messages_overview import get_messages_overview_backend
+from .views.user_groups import get_user_groups_with_accessible_members_tree
 
 v1_api_and_json_patterns = [
     # GET returns every last message in each stream user subscribed to,
@@ -16,6 +17,7 @@ v1_api_and_json_patterns = [
     # The "unread" field has also been added, which means the number of unread messages
     # in the stream/private chat.
     zerver.lib.rest.rest_path("messages/overview", GET=get_messages_overview_backend),
+    zerver.lib.rest.rest_path("user_groups/tree", GET=get_user_groups_with_accessible_members_tree),
 ]
 
 iparty_internal_patterns = [
