@@ -9,6 +9,7 @@ from zerver.models import (
 )
 
 from zerver_mod.lib.user_groups import get_recursive_groups_with_accessible_members
+from zerver_mod.models import UserGroupMembershipStatus
 
 
 class UserGroupTestCase(ZulipTestCase):
@@ -119,7 +120,7 @@ class UserGroupTestCase(ZulipTestCase):
                 self.assertEqual(group.level, 4)
 
 
-class UserGroupAPITestCase(UserGroupTestCase):
+class UserGroupAPITestCase(ZulipTestCase):
     def test_user_groups_tree_get(self) -> None:
         realm = get_realm("zulip")
 
@@ -187,3 +188,47 @@ class UserGroupAPITestCase(UserGroupTestCase):
         self.assertSetEqual({x["name"] for x in tree}, {"Federals"})
         assert_items(tree)
         # pprint(response_dict)
+
+    def test_direct_member_users_get(self) -> None:
+        realm = get_realm("zulip")
+
+        aaron = self.example_user("aaron")
+        zoe = self.example_user("ZOE")
+        polonius = self.example_user("polonius")
+        desdemona = self.example_user("desdemona")
+        shiva = self.example_user("shiva")
+
+        def create(name: str, supergroup: Optional[UserGroup] = None) -> UserGroup:
+            result: UserGroup = UserGroup.objects.create(realm=realm, name=name)
+            if supergroup:
+                GroupGroupMembership.objects.create(supergroup=supergroup, subgroup=result)
+            return result
+
+        federals_group = create(name="Federals")
+        reg_office_group = create(name="Reg Office 1-1", supergroup=federals_group)
+
+        UserGroupMembership.objects.create(user_profile=polonius, user_group=federals_group)
+        UserGroupMembership.objects.create(user_profile=desdemona, user_group=federals_group)
+        zoe_membership = UserGroupMembership.objects.create(user_profile=zoe, user_group=federals_group)
+        UserGroupMembershipStatus.objects.create(membership=zoe_membership, status="Analyst")
+        UserGroupMembership.objects.create(user_profile=aaron, user_group=reg_office_group)
+        UserGroupMembership.objects.create(user_profile=zoe, user_group=reg_office_group)
+
+        self.login_user(desdemona)
+        result = self.client_get("/json/user_groups/" + str(federals_group.id) + "/direct_member_users")
+        response_dict = self.assert_json_success(result)
+        members = response_dict["members"]
+        self.assert_length(members, 2)
+        self.assertSetEqual(
+            {x["delivery_email"] for x in members}, 
+            {"polonius@zulip.com", "ZOE@zulip.com"}
+        )
+
+        result = self.client_get("/json/user_groups/" + str(reg_office_group.id) + "/direct_member_users")
+        response_dict = self.assert_json_success(result)
+        members = response_dict["members"]
+        self.assert_length(members, 2)
+        self.assertSetEqual(
+            {x["delivery_email"] for x in members}, 
+            {"AARON@zulip.com", "ZOE@zulip.com"}
+        )

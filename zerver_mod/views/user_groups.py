@@ -1,15 +1,22 @@
-from typing import Dict, List
+from typing import Any, Dict, List
 
+from django.db.models.functions import Lower
 from django.http import HttpRequest, HttpResponse
 
 from zerver.decorator import require_member_or_admin
+from zerver.lib.cache import realm_user_dict_fields
 from zerver.lib.exceptions import JsonableError
 from zerver.lib.request import REQ, has_request_variables
 from zerver.lib.response import json_success
+from zerver.lib.user_groups import (
+    access_user_group_by_id, get_user_group_direct_members)
+from zerver.lib.users import format_user_row
 from zerver.lib.validator import check_bool, check_int, check_list
 from zerver.models import UserGroup, UserProfile
 
-from ..lib.user_groups import get_recursive_groups_with_accessible_members
+from ..lib.user_groups import (
+    get_membership_statuses, get_recursive_groups_with_accessible_members)
+from ..models import UserGroupMembershipStatus
 
 
 @require_member_or_admin
@@ -39,9 +46,34 @@ def get_user_groups_with_accessible_members_tree(request: HttpRequest, user_prof
             })
         return result
 
-    ret = dict(
-        user_groups_tree=serialize(top_level_groups),
-        result="success",
-        msg="",
+    return json_success(request, data=dict(user_groups_tree=serialize(top_level_groups)))
+
+
+@require_member_or_admin
+@has_request_variables
+def get_user_group_direct_member_users(
+    request: HttpRequest,
+    user_profile: UserProfile,
+    user_group_id: int = REQ(json_validator=check_int, path_only=True),
+) -> HttpResponse:
+    user_group: UserGroup = access_user_group_by_id(user_group_id, user_profile, for_read=True)
+    user_dicts: List[Dict[str, Any]] = list(
+        get_user_group_direct_members(user_group)
+        .filter(is_active=True)
+        .exclude(id=user_profile.id)
+        .order_by(Lower("full_name"), "delivery_email")
+        .values(*realm_user_dict_fields)
     )
-    return json_success(request, data=ret)
+    membership_statuses = get_membership_statuses(user_group, [x["id"] for x in user_dicts])
+    result: List[Dict[str, Any]] = []
+    for row in user_dicts:
+        user = format_user_row(
+            user_profile.realm,
+            acting_user=user_profile,
+            row=row,
+            client_gravatar=True,
+            user_avatar_url_field_optional=False
+        )
+        user["membership_status"] = membership_statuses.get(row["id"], "")
+        result.append(user)
+    return json_success(request, data=dict(members=result))

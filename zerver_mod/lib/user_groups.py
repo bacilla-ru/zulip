@@ -1,8 +1,12 @@
+from typing import Dict, List
+
 from django.db.models import BooleanField, Count, F, IntegerField, Q, QuerySet, Value
 from django.db.models.functions import Cast
 from django_cte import With
 
 from zerver.models import UserGroup, UserProfile
+
+from ..models import UserGroupMembershipStatus
 
 
 def get_recursive_groups_with_accessible_members(user_profile: UserProfile) -> QuerySet[UserGroup]:
@@ -54,3 +58,12 @@ def get_recursive_groups_with_accessible_members(user_profile: UserProfile) -> Q
         )
         .order_by("name")
     )
+
+
+def get_membership_statuses(user_group: UserGroup, user_profile_ids: List[int]) -> Dict[int, str]:
+    return {
+        x["user_profile_id"]: x["status"] for x in 
+        UserGroupMembershipStatus.objects.filter(
+            membership__user_group=user_group, membership__user_profile__id__in=user_profile_ids
+        ).values("status", user_profile_id=F("membership__user_profile__id"))
+    }
